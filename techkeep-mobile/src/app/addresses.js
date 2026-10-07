@@ -18,7 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
-const API_URL = "http://https://howard-cigarette-standings-february.trycloudflare.com";
+const API_URL = "http://http://192.168.1.41:3000";
 
 export default function Addresses() {
   const [address, setAddress] = useState("");

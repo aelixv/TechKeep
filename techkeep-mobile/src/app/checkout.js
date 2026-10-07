@@ -18,7 +18,7 @@ import {
   useFocusEffect,
 } from "expo-router";
 
-const API_URL = "http://https://howard-cigarette-standings-february.trycloudflare.com";
+const API_URL = "http://http://192.168.1.41:3000";
 
 export default function CheckoutScreen() {
   const { items, productId, quantity } = useLocalSearchParams();

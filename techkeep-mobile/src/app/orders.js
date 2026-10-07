@@ -142,7 +142,7 @@ export default function Orders() {
       }
 
       const response = await fetch(
-        "http://https://howard-cigarette-standings-february.trycloudflare.com/api/orders",
+        "http://http://192.168.1.41:3000/api/orders",
         {
           method: "GET",
           headers: {

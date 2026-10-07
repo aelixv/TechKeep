@@ -58,7 +58,7 @@ export default function AuthScreen() {
 
       try {
         const response = await fetch(
-          "http://https://howard-cigarette-standings-february.trycloudflare.com/api/auth/login",
+          "http://http://192.168.1.41:3000/api/auth/login",
           {
             method: "POST",
             headers: {
@@ -130,7 +130,7 @@ export default function AuthScreen() {
 
       try {
         const response = await fetch(
-          "http://https://howard-cigarette-standings-february.trycloudflare.com/api/auth/register",
+          "http://http://192.168.1.41:3000/api/auth/register",
           {
             method: "POST",
             headers: {
@@ -232,7 +232,7 @@ export default function AuthScreen() {
 
     try {
       const response = await fetch(
-        "http://https://howard-cigarette-standings-february.trycloudflare.com/api/auth/reset-password",
+        "http://http://192.168.1.41:3000/api/auth/reset-password",
         {
           method: "PUT",
           headers: {
