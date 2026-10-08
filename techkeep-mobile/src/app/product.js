@@ -14,7 +14,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 
-const API_URL = "http://http://192.168.1.41:3000";
+const API_URL = "https://backend-2-h20j.onrender.com";
 
 export default function ProductScreen() {
   const { id } = useLocalSearchParams();
@@ -276,11 +276,13 @@ export default function ProductScreen() {
             </View>
 
             <Text style={styles.sellerText}>
-              {product.seller ||
-                product.sellerName ||
-                product.shopName ||
-                "Seller"}
-            </Text>
+  {typeof product.seller === "object"
+    ? product.seller?.name || "Seller"
+    : product.seller ||
+      product.sellerName ||
+      product.shopName ||
+      "Seller"}
+</Text>
 
           </View>
 

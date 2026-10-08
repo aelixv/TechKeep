@@ -571,8 +571,10 @@ export default function CartScreen() {
                   </Text>
 
                   <Text style={styles.itemSeller}>
-                    {item.seller}
-                  </Text>
+  {typeof item.seller === "object"
+    ? item.seller?.name || "Seller"
+    : item.seller || "Seller"}
+</Text>
 
                   <Text
                     style={styles.itemPrice}

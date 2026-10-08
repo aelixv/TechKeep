@@ -58,7 +58,7 @@ export default function AuthScreen() {
 
       try {
         const response = await fetch(
-          "http://http://192.168.1.41:3000/api/auth/login",
+          "http://backend-2-h20j.onrender.com/api/auth/login",
           {
             method: "POST",
             headers: {
@@ -130,7 +130,7 @@ export default function AuthScreen() {
 
       try {
         const response = await fetch(
-          "http://http://192.168.1.41:3000/api/auth/register",
+          "http://backend-2-h20j.onrender.com/api/auth/register",
           {
             method: "POST",
             headers: {
@@ -232,7 +232,7 @@ export default function AuthScreen() {
 
     try {
       const response = await fetch(
-        "http://http://192.168.1.41:3000/api/auth/reset-password",
+        "http://backend-2-h20j.onrender.com/api/auth/reset-password",
         {
           method: "PUT",
           headers: {

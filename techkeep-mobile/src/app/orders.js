@@ -142,7 +142,7 @@ export default function Orders() {
       }
 
       const response = await fetch(
-        "http://http://192.168.1.41:3000/api/orders",
+        "https://backend-2-h20j.onrender.com/api/orders",
         {
           method: "GET",
           headers: {

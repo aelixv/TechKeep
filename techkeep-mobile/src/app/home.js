@@ -17,7 +17,7 @@ import { router } from "expo-router";
 // API
 // =====================================================
 
-const API_URL = "http://http://192.168.1.41:3000";
+const API_URL = "https://backend-2-h20j.onrender.com";
 
 // =====================================================
 // CATEGORIES
@@ -438,11 +438,13 @@ export default function HomeScreen() {
                 </Text>
 
                 <Text style={styles.seller}>
-                  {product.seller ||
-                    product.sellerName ||
-                    product.shopName ||
-                    "Seller"}
-                </Text>
+  {typeof product.seller === "object"
+    ? product.seller?.name || "Seller"
+    : product.seller ||
+      product.sellerName ||
+      product.shopName ||
+      "Seller"}
+</Text> 
 
               </Pressable>
 

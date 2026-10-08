@@ -18,7 +18,7 @@ import {
   useFocusEffect,
 } from "expo-router";
 
-const API_URL = "http://http://192.168.1.41:3000";
+const API_URL = "https://backend-2-h20j.onrender.com";
 
 export default function CheckoutScreen() {
   const { items, productId, quantity } = useLocalSearchParams();
@@ -147,6 +147,7 @@ export default function CheckoutScreen() {
           }
 
           const user = data.user || data;
+          console.log("USER FROM API:", JSON.stringify(user, null, 2));
 
           setCustomer({
             name:
@@ -166,14 +167,11 @@ export default function CheckoutScreen() {
               "No phone number",
 
             address:
-              typeof user.address === "string"
-                ? user.address
-                : user.address?.fullAddress ||
-                  user.address?.full_address ||
-                  user.address?.address ||
-                  user.deliveryAddress ||
-                  user.delivery_address ||
-                  "No delivery address",
+  user.address ||
+  user.deliveryAddress ||
+  user.delivery_address ||
+  "No delivery address",
+
           });
         } catch (error) {
           console.error(
@@ -636,10 +634,10 @@ export default function CheckoutScreen() {
                     </Text>
 
                     <Text
-                      style={styles.productSeller}
-                    >
-                      {item.seller}
-                    </Text>
+  style={styles.productSeller}
+>
+  {item.seller?.name}
+</Text>
 
                     <Text
                       style={styles.productQuantity}

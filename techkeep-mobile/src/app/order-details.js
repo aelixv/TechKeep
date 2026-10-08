@@ -14,7 +14,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
-const API_URL = "http://http://192.168.1.41:3000";
+const API_URL = "https://backend-2-h20j.onrender.com";
 
 function formatPrice(price) {
   return `₱${Number(price || 0).toLocaleString(

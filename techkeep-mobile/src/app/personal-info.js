@@ -18,7 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
-const API_URL = "http://http://192.168.1.41:3000";
+const API_URL = "https://backend-2-h20j.onrender.com";
 
 export default function PersonalInfo() {
   const [name, setName] = useState("");
