@@ -246,11 +246,16 @@ export default function CartScreen() {
   // SELECTED TOTAL
   // ===================================================
 
-  const selectedTotal = selectedItems.reduce(
+  const selectedSubtotal = selectedItems.reduce(
     (total, item) =>
-      total + item.price * item.quantity,
+      total + Number(item.price || 0) * Number(item.quantity || 1),
     0
   );
+
+  const deliveryFee = selectedItems.length > 0 ? 49 : 0;
+
+  const selectedTotal = selectedSubtotal + deliveryFee;
+  
 
   // ===================================================
   // FORMAT PRICE
@@ -707,17 +712,25 @@ export default function CartScreen() {
 
           <View style={styles.divider} />
 
-          <View style={styles.totalRow}>
+          <View style={styles.summaryRow}>
+  <Text style={styles.summaryLabel}>
+    Delivery Fee
+  </Text>
 
-            <Text style={styles.totalLabel}>
-              Total
-            </Text>
+  <Text style={styles.summaryValue}>
+    {formatPrice(deliveryFee)}
+  </Text>
+</View>
 
-            <Text style={styles.totalPrice}>
-              {formatPrice(selectedTotal)}
-            </Text>
+<View style={styles.totalRow}>
+  <Text style={styles.totalLabel}>
+    Total
+  </Text>
 
-          </View>
+  <Text style={styles.totalPrice}>
+    {formatPrice(selectedTotal)}
+  </Text>
+</View>       
 
         </View>
 

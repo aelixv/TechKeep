@@ -498,9 +498,12 @@ export default function HomeScreen() {
                 NEW ARRIVAL
               </Text>
 
-              <Text style={styles.newArrivalTitle}>
-                {newArrival.name}
-              </Text>
+              <Text
+  style={styles.newArrivalTitle}
+  numberOfLines={2}
+>
+  {newArrival.name}
+</Text>
 
               <Text style={styles.newArrivalPrice}>
                 ₱
@@ -1022,50 +1025,35 @@ const styles = StyleSheet.create({
   },
 
   newArrival: {
-    height: 145,
+minHeight: 155,
+backgroundColor: "#FFFFFF",
+borderRadius: 18,
+padding: 14,
+flexDirection: "row",
+alignItems: "center",
+overflow: "hidden",
+},
 
-    backgroundColor: "#FFFFFF",
+newArrivalText: {
+flex: 1,
+minWidth: 0,
+justifyContent: "center",
+paddingRight: 8,
+},
 
-    borderRadius: 18,
+newArrivalTitle: {
+fontSize: 16,
+fontWeight: "700",
+color: "#000000",
+marginTop: 5,
+},
 
-    padding: 18,
+newArrivalImage: {
+width: 110,
+height: 115,
+flexShrink: 0,
+},
 
-    flexDirection: "row",
-
-    overflow: "hidden",
-  },
-
-  newArrivalText: {
-    flex: 1,
-
-    justifyContent: "center",
-  },
-
-  newArrivalTitle: {
-    fontSize: 19,
-
-    fontWeight: "700",
-
-    color: "#000000",
-
-    marginTop: 5,
-  },
-
-  newArrivalPrice: {
-    fontSize: 14,
-
-    fontWeight: "600",
-
-    color: "#222222",
-
-    marginTop: 8,
-  },
-
-  newArrivalImage: {
-    width: 145,
-
-    height: 125,
-  },
 
   bottomNav: {
     position: "absolute",

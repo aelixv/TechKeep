@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+
+import React, { useCallback, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import {
@@ -9,6 +10,7 @@ import {
   ScrollView,
   Image,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
@@ -17,47 +19,162 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 const API_URL = "https://backend-2-h20j.onrender.com";
 
 function formatPrice(price) {
-  return `₱${Number(price || 0).toLocaleString(
-    "en-PH",
-    {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }
-  )}`;
+  return `₱${Number(price || 0).toLocaleString("en-PH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function formatDate(date) {
-  if (!date) {
-    return "";
+  if (!date) return "N/A";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return "N/A";
+
+  return parsedDate.toLocaleDateString("en-PH", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function normalizeRawStatus(status) {
+  const value = String(status || "To Pay")
+    .toLowerCase()
+    .replace(/[_-]/g, " ")
+    .trim();
+
+  const statuses = {
+    pending: "To Pay",
+    unpaid: "To Pay",
+    "order placed": "To Pay",
+    "to pay": "To Pay",
+
+    processing: "Seller Preparing",
+    "seller preparing": "Seller Preparing",
+    "to ship": "Seller Preparing",
+
+    "to shipped": "To Shipped",
+    shipped: "Shipped",
+
+    "out for delivery": "Out for Delivery",
+    "to receive": "To Receive",
+
+    delivered: "Completed",
+    completed: "Completed",
+
+    cancelled: "Cancelled",
+    canceled: "Cancelled",
+  };
+
+  return statuses[value] || status || "To Pay";
+}
+
+function normalizeStatus(status) {
+  const rawStatus = normalizeRawStatus(status);
+
+  switch (rawStatus) {
+    case "To Pay":
+      return "To Pay";
+
+    case "Seller Preparing":
+    case "To Shipped":
+      return "To Ship";
+
+    case "Shipped":
+    case "Out for Delivery":
+    case "To Receive":
+      return "To Receive";
+
+    case "Completed":
+      return "Completed";
+
+    case "Cancelled":
+      return "Cancelled";
+
+    default:
+      return "To Pay";
+  }
+}
+
+function normalizePaymentMethod(method) {
+  if (!method) return "Cash on Delivery";
+
+  const value = String(method).toLowerCase().trim();
+
+  if (value === "cod" || value === "cash on delivery") {
+    return "Cash on Delivery";
   }
 
-  return new Date(date).toLocaleDateString(
-    "en-PH",
-    {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
+  if (value === "gcash") {
+    return "GCash";
+  }
+
+  return method;
+}
+
+function normalizePaymentStatus(status) {
+  if (!status) return "Pending";
+
+  const value = String(status).toLowerCase().trim();
+
+  if (
+    value === "paid" ||
+    value === "completed" ||
+    value === "successful"
+  ) {
+    return "Paid";
+  }
+
+  if (value === "pending" || value === "unpaid") {
+    return "Pending";
+  }
+
+  return status;
+}
+
+function getSellerName(value, fallback = "Seller") {
+  if (value && typeof value === "object") {
+    return (
+      getSellerName(value.name, "") ||
+      getSellerName(value.shopName, "") ||
+      getSellerName(value.storeName, "") ||
+      getSellerName(value.username, "") ||
+      getSellerName(value.businessName, "") ||
+      fallback
+    );
+  }
+
+  if (typeof value === "string") {
+    const name = value.trim();
+
+    if (
+      !name ||
+      /^\d+$/.test(name) ||
+      /^[a-f\d]{24}$/i.test(name)
+    ) {
+      return fallback;
     }
-  );
+
+    return name;
+  }
+
+  return fallback;
 }
 
 function getStatusIcon(status) {
   switch (status) {
     case "To Pay":
       return "card-outline";
-
     case "To Ship":
       return "cube-outline";
-
     case "To Receive":
       return "bicycle-outline";
-
     case "Completed":
       return "checkmark-circle-outline";
-
     case "Cancelled":
       return "close-circle-outline";
-
     default:
       return "receipt-outline";
   }
@@ -109,476 +226,609 @@ function getStatusColors(status) {
   }
 }
 
-function getTrackingStep(status) {
+function getTrackingSteps(order) {
+  const isGCashPaid =
+    order.paymentMethod === "GCash" &&
+    order.paymentStatus === "Paid";
+
+  if (isGCashPaid) {
+    return [
+      "Order Placed",
+      "Payment Confirmed",
+      "Seller Preparing",
+      "Shipped",
+      "Out for Delivery",
+      "Delivered",
+    ];
+  }
+
+  return [
+    "Order Placed",
+    "Seller Preparing",
+    "Shipped",
+    "Out for Delivery",
+    "Delivered",
+  ];
+}
+
+function getTrackingStep(rawStatus, steps) {
+  const status = normalizeRawStatus(rawStatus);
+
+  let targetStep;
+
   switch (status) {
     case "To Pay":
-      return 1;
+    case "Order Placed":
+      targetStep = "Order Placed";
+      break;
 
+    case "Seller Preparing":
     case "To Ship":
-      return 3;
+    case "To Shipped":
+      targetStep = "Seller Preparing";
+      break;
 
+    case "Shipped":
+      targetStep = "Shipped";
+      break;
+
+    case "Out for Delivery":
     case "To Receive":
-      return 5;
+      targetStep = "Out for Delivery";
+      break;
 
     case "Completed":
-      return 6;
+      targetStep = "Delivered";
+      break;
 
     case "Cancelled":
       return 0;
 
     default:
-      return 1;
+      targetStep = "Order Placed";
+  }
+
+  const index = steps.indexOf(targetStep);
+  return index >= 0 ? index + 1 : 1;
+}
+
+function getStatusDescription(status) {
+  switch (status) {
+    case "To Pay":
+      return "Please complete your payment.";
+    case "To Ship":
+      return "The seller is preparing your order.";
+    case "To Receive":
+      return "Your order is on the way.";
+    case "Completed":
+      return "Your order has been completed.";
+    case "Cancelled":
+      return "This order has been cancelled.";
+    default:
+      return "Your order is being processed.";
+  }
+}
+
+async function readResponse(response) {
+  const responseText = await response.text();
+
+  if (!responseText) return {};
+
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return { message: responseText };
   }
 }
 
 export default function OrderDetails() {
   const router = useRouter();
+  const { id } = useLocalSearchParams();
 
-  const { id } =
-    useLocalSearchParams();
+  const orderId = Array.isArray(id) ? id[0] : id;
 
-  const [order, setOrder] =
-    useState(null);
+  const [order, setOrder] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [requesting, setRequesting] = useState(false);
 
-  const [loading, setLoading] =
-    useState(true);
+  const loadOrder = useCallback(async () => {
+    if (!orderId) {
+      setOrder(null);
+      setLoading(false);
+      return;
+    }
 
-  useEffect(() => {
-    loadOrder();
-  }, [id]);
-
-  // ===================================================
-  // LOAD ORDER
-  // ===================================================
-
-  const loadOrder = async () => {
     try {
-      const token =
-        await AsyncStorage.getItem("token");
+      setLoading(true);
+
+      const token = await AsyncStorage.getItem("token");
+
+      let savedPhone = "";
+
+try {
+  const profileResponse = await fetch(`${API_URL}/api/auth/me`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (profileResponse.ok) {
+    const profileData = await readResponse(profileResponse);
+    const user = profileData.user || profileData;
+    savedPhone = user.phone || "";
+  }
+} catch (error) {
+  console.error("LOAD SAVED PHONE ERROR:", error);
+}
 
       if (!token) {
-        setLoading(false);
+        Alert.alert("Login Required", "Please log in again.");
+        setOrder(null);
         return;
       }
 
-      const response = await fetch(
-        `${API_URL}/api/orders`,
-        {
-          method: "GET",
+      const response = await fetch(`${API_URL}/api/orders/mine`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
 
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await response.json();
+      const data = await readResponse(response);
 
       if (!response.ok) {
-        throw new Error(
-          data.message ||
-            "Failed to get orders"
-        );
+        throw new Error(data.message || "Failed to load your orders.");
       }
 
-      const foundOrder = data.find(
-        (item) =>
-          String(item._id) === String(id)
+      const orders = Array.isArray(data)
+        ? data
+        : Array.isArray(data.orders)
+        ? data.orders
+        : [];
+
+      const foundOrder = orders.find(
+        (item) => String(item._id || item.id) === String(orderId)
       );
 
-      if (foundOrder) {
-        const firstItem =
-          foundOrder.items?.[0];
-
-        const formattedOrder = {
-          id: String(foundOrder._id),
-
-          seller:
-            firstItem?.seller ||
-            firstItem?.sellerName ||
-            firstItem?.shopName ||
-            firstItem?.sellerId ||
-            "Seller",
-
-          status:
-            foundOrder.orderStatus ||
-            "To Ship",
-
-          date: formatDate(
-            foundOrder.createdAt
-          ),
-
-          customer: {
-            name:
-              foundOrder.customer?.name ||
-              foundOrder.customerName ||
-              "No name",
-
-            phone:
-              foundOrder.customer?.phone ||
-              foundOrder.customerPhone ||
-              "No phone number",
-
-            address:
-              foundOrder.deliveryAddress ||
-              "No delivery address",
-          },
-
-          paymentMethod:
-            foundOrder.paymentMethod ===
-            "COD"
-              ? "Cash on Delivery"
-              : foundOrder.paymentMethod ||
-                "Cash on Delivery",
-
-          paymentStatus:
-            foundOrder.paymentStatus ||
-            "Pending",
-
-          items: (
-            foundOrder.items || []
-          ).map((item) => ({
-            id:
-              item.productId,
-
-            name:
-              item.productName ||
-              item.name ||
-              "Product",
-
-            price:
-              Number(item.price || 0),
-
-            quantity:
-              Number(item.quantity || 0),
-
-            image:
-              item.image || "",
-          })),
-
-          subtotal:
-            Number(
-              foundOrder.subtotal || 0
-            ),
-
-          deliveryFee:
-            Number(
-              foundOrder.deliveryFee || 0
-            ),
-
-          total:
-            Number(
-              foundOrder.total || 0
-            ),
-        };
-
-        setOrder(formattedOrder);
-      }
-    } catch (error) {
-      console.error(
-        "Load order error:",
-        error
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ===================================================
-  // UPDATE ORDER STATUS
-  // ===================================================
-
-  const updateOrderStatus = async (
-    newStatus
-  ) => {
-    try {
-      const token =
-        await AsyncStorage.getItem("token");
-
-      if (!token) {
-        Alert.alert(
-          "Session Expired",
-          "Please log in again."
-        );
-
-        return false;
+      if (!foundOrder) {
+        setOrder(null);
+        return;
       }
 
-      const response = await fetch(
-        `${API_URL}/api/orders/${order.id}/status`,
-        {
-          method: "PUT",
-
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            orderStatus: newStatus,
-          }),
-        }
+      const rawStatus = normalizeRawStatus(
+        foundOrder.status || foundOrder.orderStatus
       );
 
-      const data = await response.json();
+      const items = await Promise.all(
+        (foundOrder.items || []).map(async (item) => {
+          const productId =
+            item.productId ||
+            item.product?._id ||
+            (typeof item.product === "string" ? item.product : null) ||
+            item.id;
 
-      if (!response.ok) {
-        throw new Error(
-          data.message ||
-            "Failed to update order status"
-        );
-      }
+          let image =
+            item.image ||
+            item.productImage ||
+            item.product?.image ||
+            "";
 
-      setOrder(
-        (currentOrder) => ({
-          ...currentOrder,
+          // Use the product's existing image if the order has no saved image.
+          if (!image && productId) {
+            try {
+              const productResponse = await fetch(
+                `${API_URL}/api/products/${productId}`
+              );
 
-          status:
-            data.orderStatus ||
-            newStatus,
+              const productData = await readResponse(productResponse);
 
-          paymentStatus:
-            data.paymentStatus ||
-            currentOrder.paymentStatus,
+              if (productResponse.ok) {
+                const product = productData.product || productData;
+
+                image =
+                  product.image ||
+                  product.imageUrl ||
+                  product.images?.[0] ||
+                  "";
+              } else {
+                console.log(
+                  "PRODUCT IMAGE REQUEST FAILED:",
+                  productId,
+                  productResponse.status,
+                  productData
+                );
+              }
+            } catch (error) {
+              console.error("LOAD PRODUCT IMAGE ERROR:", productId, error);
+            }
+          }
+
+          if (image && typeof image === "object") {
+            image = image.url || image.uri || "";
+          }
+
+          return {
+            id: productId || item._id,
+            name: item.productName || item.name || "Product",
+            price: Number(item.price || 0),
+            quantity: Number(item.quantity || 1),
+            image: typeof image === "string" ? image : "",
+          };
         })
       );
 
-      return true;
-    } catch (error) {
-      console.error(
-        "Update order status error:",
-        error
+      const firstItem = foundOrder.items?.[0];
+
+      let sellerName =
+        getSellerName(firstItem?.sellerName, "") ||
+        getSellerName(firstItem?.shopName, "") ||
+        getSellerName(firstItem?.seller, "") ||
+        getSellerName(foundOrder.sellerName, "") ||
+        getSellerName(foundOrder.shopName, "");
+
+      const firstProductId =
+        firstItem?.productId ||
+        firstItem?.product?._id ||
+        (typeof firstItem?.product === "string"
+          ? firstItem.product
+          : null) ||
+        firstItem?.id;
+
+      if (firstProductId && !sellerName) {
+        try {
+          const sellerResponse = await fetch(
+            `${API_URL}/api/products/${firstProductId}`
+          );
+
+          const sellerData = await readResponse(sellerResponse);
+
+          if (sellerResponse.ok) {
+            const product = sellerData.product || sellerData;
+
+            sellerName =
+              getSellerName(product.sellerName, "") ||
+              getSellerName(product.shopName, "") ||
+              getSellerName(product.storeName, "") ||
+              getSellerName(product.seller, "");
+          }
+        } catch (error) {
+          console.error("LOAD ORDER SELLER ERROR:", error);
+        }
+      }
+
+      // Calculate the subtotal, delivery fee, and final total once.
+      const calculatedSubtotal = (foundOrder.items || []).reduce(
+        (sum, item) =>
+          sum +
+          Number(item.price || 0) * Number(item.quantity || 1),
+        0
       );
+
+      const savedSubtotal = Number(foundOrder.subtotal);
+      const subtotal =
+        foundOrder.subtotal != null && Number.isFinite(savedSubtotal)
+          ? savedSubtotal
+          : calculatedSubtotal;
+
+      const savedFee = Number(foundOrder.deliveryFee);
+      const deliveryFee =
+        foundOrder.deliveryFee != null &&
+        Number.isFinite(savedFee) &&
+        savedFee > 0
+          ? savedFee
+          : 49;
+
+      setOrder({
+        id: foundOrder._id || foundOrder.id,
+        seller: sellerName || "Seller",
+        rawStatus,
+        status: normalizeStatus(rawStatus),
+        date: formatDate(foundOrder.createdAt),
+        customer: {
+          name:
+            foundOrder.customerName ||
+            foundOrder.shippingAddress?.name ||
+            "TechKeep User",
+          phone:
+  foundOrder.phone ||
+  foundOrder.shippingAddress?.phone ||
+  savedPhone ||
+  "Not provided",
+          address:
+            foundOrder.deliveryAddress ||
+            foundOrder.shippingAddress?.address ||
+            foundOrder.shippingAddress ||
+            "No delivery address provided",
+        },
+        paymentMethod: normalizePaymentMethod(foundOrder.paymentMethod),
+        paymentStatus: normalizePaymentStatus(foundOrder.paymentStatus),
+        items,
+        subtotal,
+        deliveryFee,
+        total: subtotal + deliveryFee,
+      });
+    } catch (error) {
+      console.error("LOAD ORDER ERROR:", error);
 
       Alert.alert(
-        "Error",
-        error.message ||
-          "Failed to update order status."
+        "Unable to Load Order",
+        error.message || "Please try again."
       );
 
+      setOrder(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [orderId]);
+
+  useEffect(() => {
+    loadOrder();
+  }, [loadOrder]);
+
+  const updateOrderStatus = async (newStatus) => {
+    if (!order) return false;
+
+    try {
+      const token = await AsyncStorage.getItem("token");
+
+      if (!token) {
+        Alert.alert("Login Required", "Please log in again.");
+        return false;
+      }
+
+      const url = `${API_URL}/api/orders/${order.id}/status`;
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      const data = await readResponse(response);
+
+      if (!response.ok) {
+        throw new Error(data.message || `Request failed: ${response.status}`);
+      }
+
+      const updatedRawStatus = normalizeRawStatus(data.status || newStatus);
+
+      setOrder((currentOrder) => ({
+        ...currentOrder,
+        rawStatus: updatedRawStatus,
+        status: normalizeStatus(updatedRawStatus),
+        paymentStatus: normalizePaymentStatus(
+          data.paymentStatus || currentOrder.paymentStatus
+        ),
+      }));
+
+      return true;
+    } catch (error) {
+      console.error("UPDATE ORDER STATUS ERROR:", error);
+      Alert.alert(
+        "Update Failed",
+        error.message || "Could not update the order."
+      );
       return false;
     }
   };
 
-  // ===================================================
-  // NOT FOUND
-  // ===================================================
+  // CANCEL ORDER (COD)
+  const cancelOrder = async () => {
+    if (!order || requesting) return;
 
-  if (!loading && !order) {
-    return (
-      <View style={styles.container}>
+    if (order.paymentMethod !== "Cash on Delivery") {
+      Alert.alert(
+        "Cancellation Unavailable",
+        "This cancellation action is currently for Cash on Delivery orders."
+      );
+      return;
+    }
 
-        <View style={styles.header}>
+    if (!["To Pay", "To Ship"].includes(order.status)) {
+      Alert.alert(
+        "Cannot Cancel",
+        "This order can no longer be cancelled at its current status."
+      );
+      return;
+    }
 
-          <Pressable
-            style={styles.headerButton}
-            onPress={() => router.back()}
-          >
-            <Ionicons
-              name="arrow-back"
-              size={22}
-              color="#000000"
-            />
-          </Pressable>
+    try {
+      setRequesting(true);
 
-          <View
-            style={
-              styles.headerTitleContainer
-            }
-          >
-            <Text style={styles.headerTitle}>
-              Order Details
-            </Text>
-          </View>
+      const token = await AsyncStorage.getItem("token");
 
-          <View style={styles.headerSpacer} />
+      if (!token) {
+        Alert.alert("Login Required", "Please log in again.");
+        return;
+      }
 
-        </View>
+      const url = `${API_URL}/api/orders/${order.id}/cancel`;
 
-        <View
-          style={
-            styles.notFoundContainer
-          }
-        >
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
 
-          <View style={styles.emptyIcon}>
-            <Ionicons
-              name="receipt-outline"
-              size={42}
-              color="#999999"
-            />
-          </View>
+      const data = await readResponse(response);
 
-          <Text style={styles.emptyTitle}>
-            Order Not Found
-          </Text>
+      if (!response.ok) {
+        throw new Error(data.message || `Request failed: ${response.status}`);
+      }
 
-          <Text style={styles.emptyText}>
-            We couldn't find the order
-            you're looking for.
-          </Text>
+      const updatedRawStatus = normalizeRawStatus(data.status || "Cancelled");
 
-          <Pressable
-            style={styles.shopButton}
-            onPress={() =>
-              router.replace("/orders")
-            }
-          >
-            <Text
-              style={styles.shopButtonText}
-            >
-              Back to Orders
-            </Text>
+      setOrder((currentOrder) => ({
+        ...currentOrder,
+        rawStatus: updatedRawStatus,
+        status: normalizeStatus(updatedRawStatus),
+        paymentStatus: normalizePaymentStatus(
+          data.paymentStatus || currentOrder.paymentStatus
+        ),
+      }));
 
-            <Ionicons
-              name="arrow-forward"
-              size={16}
-              color="#FFFFFF"
-            />
-          </Pressable>
+      Alert.alert(
+        "Order Cancelled",
+        data.message || "Your order has been cancelled."
+      );
+    } catch (error) {
+      console.error("CANCEL ORDER ERROR:", error);
+      Alert.alert(
+        "Cancellation Failed",
+        error.message || "Could not cancel this order."
+      );
+    } finally {
+      setRequesting(false);
+    }
+  };
 
-        </View>
+  // PAY NOW (SIMULATED GCASH)
+  const payOrder = async () => {
+    if (!order || requesting) return;
 
-      </View>
-    );
-  }
+    if (order.paymentMethod !== "GCash") {
+      Alert.alert(
+        "Payment Unavailable",
+        "Pay Now is currently available for GCash orders only."
+      );
+      return;
+    }
 
-  if (loading || !order) {
-    return null;
-  }
+    try {
+      setRequesting(true);
 
-  const statusColors =
-    getStatusColors(
-      order.status
-    );
+      const token = await AsyncStorage.getItem("token");
 
-  const trackingStep =
-    getTrackingStep(
-      order.status
-    );
+      if (!token) {
+        Alert.alert("Login Required", "Please log in again.");
+        return;
+      }
 
-  // ===================================================
-  // CANCEL ORDER
-  // ===================================================
+      const url = `${API_URL}/api/orders/${order.id}/pay`;
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      const data = await readResponse(response);
+
+      if (!response.ok) {
+        throw new Error(data.message || `Request failed: ${response.status}`);
+      }
+
+      const updatedRawStatus = normalizeRawStatus(data.status || "To Ship");
+
+      setOrder((currentOrder) => ({
+        ...currentOrder,
+        rawStatus: updatedRawStatus,
+        status: normalizeStatus(updatedRawStatus),
+        paymentStatus: normalizePaymentStatus(data.paymentStatus || "Paid"),
+      }));
+
+      Alert.alert(
+        "Payment Successful",
+        data.message || "Your simulated GCash payment was successful."
+      );
+    } catch (error) {
+      console.error("PAY ORDER ERROR:", error);
+      Alert.alert(
+        "Payment Failed",
+        error.message || "Could not process payment. Please try again."
+      );
+    } finally {
+      setRequesting(false);
+    }
+  };
 
   const handleCancelOrder = () => {
-    if (order.status !== "To Ship") {
+    if (!order || !["To Pay", "To Ship"].includes(order.status)) {
+      Alert.alert(
+        "Cannot Cancel",
+        "This order cannot be cancelled at its current status."
+      );
+      return;
+    }
+
+    if (order.paymentMethod !== "Cash on Delivery") {
+      Alert.alert(
+        "Cancellation Unavailable",
+        "This cancellation action is currently for Cash on Delivery orders."
+      );
       return;
     }
 
     Alert.alert(
       "Cancel Order",
-      "Are you sure you want to cancel this order?",
+      "Are you sure you want to cancel this COD order?",
       [
-        {
-          text: "No",
-          style: "cancel",
-        },
-
+        { text: "Keep Order", style: "cancel" },
         {
           text: "Yes, Cancel",
           style: "destructive",
-
-          onPress: async () => {
-            const success =
-              await updateOrderStatus(
-                "Cancelled"
-              );
-
-            if (success) {
-              Alert.alert(
-                "Order Cancelled",
-                "Your order has been cancelled."
-              );
-            }
-          },
+          onPress: cancelOrder,
         },
       ]
     );
   };
 
-  // ===================================================
-  // CONTACT SELLER
-  // ===================================================
-
-  const handleContactSeller = () => {
-    Alert.alert(
-      "Contact Seller",
-      `You can contact ${order.seller} through the seller support section once the backend is connected.`
-    );
-  };
-
-  // ===================================================
-  // PAY NOW
-  // ===================================================
-
   const handlePayNow = () => {
-    if (order.status !== "To Pay") {
+    if (!order || order.status !== "To Pay") {
+      Alert.alert(
+        "Payment Unavailable",
+        "This order is not waiting for payment."
+      );
+      return;
+    }
+
+    if (order.paymentMethod !== "GCash") {
+      Alert.alert(
+        "Payment Unavailable",
+        "Pay Now is currently available for GCash orders only."
+      );
       return;
     }
 
     Alert.alert(
       "Confirm Payment",
-      `Pay ${formatPrice(
-        order.total
-      )} for this order?`,
+      `Confirm your simulated GCash payment of ${formatPrice(order.total)}?`,
       [
-        {
-          text: "Cancel",
-          style: "cancel",
-        },
-
-        {
-          text: "Confirm Payment",
-
-          onPress: async () => {
-            const success =
-              await updateOrderStatus(
-                "To Ship"
-              );
-
-            if (success) {
-              Alert.alert(
-                "Payment Successful",
-                "Your payment has been confirmed. The seller will now prepare your order."
-              );
-            }
-          },
-        },
+        { text: "Cancel", style: "cancel" },
+        { text: "Yes, Pay Now", onPress: payOrder },
       ]
     );
   };
 
-  // ===================================================
-  // ORDER RECEIVED
-  // ===================================================
-
   const handleOrderReceived = () => {
-    if (
-      order.status !==
-      "To Receive"
-    ) {
+    if (!order || order.status !== "To Receive") {
+      Alert.alert(
+        "Unavailable",
+        "This order is not waiting for delivery confirmation."
+      );
       return;
     }
 
     Alert.alert(
-      "Order Received",
+      "Confirm Order Received",
       "Have you received your order?",
       [
-        {
-          text: "Not Yet",
-          style: "cancel",
-        },
-
+        { text: "Not Yet", style: "cancel" },
         {
           text: "Yes, Received",
-
           onPress: async () => {
-            const success =
-              await updateOrderStatus(
-                "Completed"
-              );
+            const success = await updateOrderStatus("Completed");
 
             if (success) {
               Alert.alert(
@@ -592,310 +842,158 @@ export default function OrderDetails() {
     );
   };
 
-  // ===================================================
-  // BUY AGAIN
-  // ===================================================
+  const handleContactSeller = () => {
+    Alert.alert(
+      "Contact Seller",
+      `Contact ${order?.seller || "the seller"} through the seller support section.`
+    );
+  };
 
-  const handleBuyAgain =
-    async () => {
-      try {
-        const existingCart =
-          await AsyncStorage.getItem(
-            "cart"
-          );
+  if (loading) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color="#000000" />
+        <Text style={styles.loadingText}>Loading order details...</Text>
+      </View>
+    );
+  }
 
-        let cart = [];
+  if (!order) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Pressable
+            style={styles.headerButton}
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={22} color="#000000" />
+          </Pressable>
 
-        if (existingCart) {
-          try {
-            const parsedCart =
-              JSON.parse(
-                existingCart
-              );
+          <Text style={styles.headerTitle}>Order Details</Text>
 
-            if (
-              Array.isArray(
-                parsedCart
-              )
-            ) {
-              cart =
-                parsedCart;
-            }
-          } catch (error) {
-            cart = [];
-          }
-        }
+          <View style={styles.headerButton} />
+        </View>
 
-        order.items.forEach(
-          (item) => {
-            const existingIndex =
-              cart.findIndex(
-                (cartItem) =>
-                  String(
-                    cartItem.productId ??
-                      cartItem.id
-                  ) ===
-                  String(item.id)
-              );
+        <View style={styles.notFoundContainer}>
+          <View style={styles.emptyIcon}>
+            <Ionicons name="receipt-outline" size={42} color="#999999" />
+          </View>
 
-            if (
-              existingIndex >= 0
-            ) {
-              cart[
-                existingIndex
-              ] = {
-                ...cart[
-                  existingIndex
-                ],
+          <Text style={styles.emptyTitle}>Order Not Found</Text>
 
-                quantity:
-                  Number(
-                    cart[
-                      existingIndex
-                    ].quantity
-                  ) +
-                  Number(
-                    item.quantity
-                  ),
-              };
-            } else {
-              cart.push({
-                id: item.id,
+          <Text style={styles.emptyText}>
+            We couldn't find the order you're looking for.
+          </Text>
 
-                productId:
-                  item.id,
+          <Pressable
+            style={styles.shopButton}
+            onPress={() => router.replace("/orders")}
+          >
+            <Text style={styles.shopButtonText}>Back to Orders</Text>
+            <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
-                productName:
-                  item.name,
-
-                name: item.name,
-
-                price:
-                  item.price,
-
-                quantity:
-                  item.quantity,
-
-                image:
-                  item.image,
-              });
-            }
-          }
-        );
-
-        await AsyncStorage.setItem(
-          "cart",
-          JSON.stringify(cart)
-        );
-
-        router.push("/cart");
-      } catch (error) {
-        console.error(
-          "Buy again error:",
-          error
-        );
-
-        Alert.alert(
-          "Error",
-          "Unable to add the items to your cart."
-        );
-      }
-    };
-
-  // ===================================================
-  // MAIN SCREEN
-  // ===================================================
+  const statusColors = getStatusColors(order.status);
+  const trackingSteps = getTrackingSteps(order);
+  const trackingStep = getTrackingStep(order.rawStatus, trackingSteps);
 
   return (
     <View style={styles.container}>
-
-      {/* FIXED HEADER */}
-
       <View style={styles.header}>
-
         <Pressable
           style={styles.headerButton}
           onPress={() => router.back()}
         >
-          <Ionicons
-            name="arrow-back"
-            size={22}
-            color="#000000"
-          />
+          <Ionicons name="arrow-back" size={22} color="#000000" />
         </Pressable>
 
-        <View
-          style={
-            styles.headerTitleContainer
-          }
-        >
-          <Text style={styles.headerTitle}>
-            Order Details
-          </Text>
-
-          <Text
-            style={styles.headerSubtitle}
-          >
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>Order Details</Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
             {order.id}
           </Text>
         </View>
 
         <Pressable
           style={styles.headerButton}
-          onPress={
-            handleContactSeller
-          }
+          onPress={handleContactSeller}
         >
-          <Ionicons
-            name="chatbubble-outline"
-            size={20}
-            color="#000000"
-          />
+          <Ionicons name="chatbubble-outline" size={20} color="#000000" />
         </Pressable>
-
       </View>
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={
-          styles.content
-        }
-        showsVerticalScrollIndicator={
-          false
-        }
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
       >
-
-        {/* STATUS */}
-
         <View style={styles.statusCard}>
-
-          <View
-            style={
-              styles.statusIconCircle
-            }
-          >
+          <View style={styles.statusIconCircle}>
             <Ionicons
-              name={getStatusIcon(
-                order.status
-              )}
+              name={getStatusIcon(order.status)}
               size={25}
-              color={
-                statusColors.text
-              }
+              color={statusColors.text}
             />
           </View>
 
           <View style={styles.statusInfo}>
-
-            <Text
-              style={styles.statusTitle}
-            >
-              {order.status}
+            <Text style={styles.statusTitle}>{order.status}</Text>
+            <Text style={styles.statusDescription}>
+              {getStatusDescription(order.status)}
             </Text>
-
-            <Text
-              style={
-                styles.statusDescription
-              }
-            >
-              {order.status ===
-              "To Pay"
-                ? "Please complete your payment."
-                : order.status ===
-                  "To Ship"
-                ? "The seller is preparing your order."
-                : order.status ===
-                  "To Receive"
-                ? "Your order is on the way."
-                : order.status ===
-                  "Completed"
-                ? "Your order has been completed."
-                : order.status ===
-                  "Cancelled"
-                ? "This order has been cancelled."
-                : "Your order is being processed."}
-            </Text>
-
           </View>
 
           <View
             style={[
               styles.statusBadge,
               {
-                backgroundColor:
-                  statusColors.background,
-
-                borderColor:
-                  statusColors.border,
+                backgroundColor: statusColors.background,
+                borderColor: statusColors.border,
               },
             ]}
           >
             <Text
-              style={[
-                styles.statusBadgeText,
-                {
-                  color:
-                    statusColors.text,
-                },
-              ]}
+              style={[styles.statusBadgeText, { color: statusColors.text }]}
             >
               {order.status}
             </Text>
           </View>
-
         </View>
 
-        {/* DELIVERY TRACKING */}
-
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Delivery Tracking</Text>
 
-          <Text style={styles.sectionTitle}>
-            Delivery Tracking
-          </Text>
-
-          <View
-            style={styles.trackingCard}
-          >
-
-            {[
-              "Order Placed",
-              "Payment Confirmed",
-              "Seller Preparing",
-              "Shipped",
-              "Out for Delivery",
-              "Delivered",
-            ].map(
-              (step, index) => {
-                const stepNumber =
-                  index + 1;
-
-                const isCompleted =
-                  stepNumber <
-                  trackingStep;
-
-                const isCurrent =
-                  stepNumber ===
-                  trackingStep;
+          {order.status === "Cancelled" ? (
+            <View style={styles.trackingCard}>
+              <View style={styles.cancelledTracking}>
+                <Ionicons
+                  name="close-circle-outline"
+                  size={24}
+                  color="#B32626"
+                />
+                <Text style={styles.cancelledTrackingText}>
+                  This order has been cancelled.
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.trackingCard}>
+              {trackingSteps.map((step, index) => {
+                const stepNumber = index + 1;
+                const isCompleted = stepNumber < trackingStep;
+                const isCurrent = stepNumber === trackingStep;
 
                 return (
-                  <View
-                    key={step}
-                    style={
-                      styles.trackingRow
-                    }
-                  >
-
-                    <View
-                      style={
-                        styles.trackingIndicatorColumn
-                      }
-                    >
-
+                  <View key={step} style={styles.trackingRow}>
+                    <View style={styles.trackingIndicatorColumn}>
                       <View
                         style={[
                           styles.trackingCircle,
-                          (isCompleted ||
-                            isCurrent) &&
+                          (isCompleted || isCurrent) &&
                             styles.trackingCircleActive,
                         ]}
                       >
@@ -907,44 +1005,28 @@ export default function OrderDetails() {
                               ? "ellipse"
                               : "ellipse-outline"
                           }
-                          size={
-                            isCompleted
-                              ? 14
-                              : 10
-                          }
+                          size={isCompleted ? 14 : 10}
                           color={
-                            isCompleted ||
-                            isCurrent
-                              ? "#FFFFFF"
-                              : "#AAAAAA"
+                            isCompleted || isCurrent ? "#FFFFFF" : "#AAAAAA"
                           }
                         />
                       </View>
 
-                      {stepNumber <
-                        6 && (
+                      {stepNumber < trackingSteps.length && (
                         <View
                           style={[
                             styles.trackingLine,
-                            isCompleted &&
-                              styles.trackingLineActive,
+                            isCompleted && styles.trackingLineActive,
                           ]}
                         />
                       )}
-
                     </View>
 
-                    <View
-                      style={
-                        styles.trackingTextContainer
-                      }
-                    >
-
+                    <View style={styles.trackingTextContainer}>
                       <Text
                         style={[
                           styles.trackingStepText,
-                          (isCompleted ||
-                            isCurrent) &&
+                          (isCompleted || isCurrent) &&
                             styles.trackingStepTextActive,
                         ]}
                       >
@@ -952,140 +1034,51 @@ export default function OrderDetails() {
                       </Text>
 
                       {isCurrent && (
-                        <Text
-                          style={
-                            styles.trackingCurrentText
-                          }
-                        >
+                        <Text style={styles.trackingCurrentText}>
                           Current status
                         </Text>
                       )}
-
                     </View>
-
                   </View>
                 );
-              }
-            )}
-
-          </View>
-
+              })}
+            </View>
+          )}
         </View>
 
-        {/* ORDER INFORMATION */}
-
         <View style={styles.section}>
-
-          <Text style={styles.sectionTitle}>
-            Order Information
-          </Text>
+          <Text style={styles.sectionTitle}>Order Information</Text>
 
           <View style={styles.infoCard}>
-
-            <View style={styles.infoRow}>
-
-              <View style={styles.infoIcon}>
-                <Ionicons
-                  name="receipt-outline"
-                  size={18}
-                  color="#555555"
-                />
-              </View>
-
-              <View
-                style={
-                  styles.infoTextContainer
-                }
-              >
-                <Text style={styles.infoLabel}>
-                  Order Number
-                </Text>
-
-                <Text style={styles.infoValue}>
-                  {order.id}
-                </Text>
-              </View>
-
-            </View>
-
-            <View
-              style={styles.infoDivider}
+            <InfoRow
+              icon="receipt-outline"
+              label="Order Number"
+              value={order.id}
             />
 
-            <View style={styles.infoRow}>
+            <View style={styles.infoDivider} />
 
-              <View style={styles.infoIcon}>
-                <Ionicons
-                  name="calendar-outline"
-                  size={18}
-                  color="#555555"
-                />
-              </View>
-
-              <View
-                style={
-                  styles.infoTextContainer
-                }
-              >
-                <Text style={styles.infoLabel}>
-                  Order Date
-                </Text>
-
-                <Text style={styles.infoValue}>
-                  {order.date}
-                </Text>
-              </View>
-
-            </View>
-
-            <View
-              style={styles.infoDivider}
+            <InfoRow
+              icon="calendar-outline"
+              label="Order Date"
+              value={order.date}
             />
 
-            <View style={styles.infoRow}>
+            <View style={styles.infoDivider} />
 
-              <View style={styles.infoIcon}>
-                <Ionicons
-                  name="storefront-outline"
-                  size={18}
-                  color="#555555"
-                />
-              </View>
-
-              <View
-                style={
-                  styles.infoTextContainer
-                }
-              >
-                <Text style={styles.infoLabel}>
-                  Seller
-                </Text>
-
-                <Text style={styles.infoValue}>
-                  {order.seller}
-                </Text>
-              </View>
-
-            </View>
-
+            <InfoRow
+              icon="storefront-outline"
+              label="Seller"
+              value={order.seller}
+            />
           </View>
-
         </View>
 
-        {/* DELIVERY ADDRESS */}
-
         <View style={styles.section}>
-
-          <Text style={styles.sectionTitle}>
-            Delivery Address
-          </Text>
+          <Text style={styles.sectionTitle}>Delivery Address</Text>
 
           <View style={styles.infoCard}>
-
-            <View
-              style={styles.addressHeader}
-            >
-
+            <View style={styles.addressHeader}>
               <View style={styles.addressIcon}>
                 <Ionicons
                   name="location-outline"
@@ -1094,179 +1087,92 @@ export default function OrderDetails() {
                 />
               </View>
 
-              <View
-                style={styles.addressText}
-              >
-
-                <Text
-                  style={styles.addressName}
-                >
+              <View style={styles.addressText}>
+                <Text style={styles.addressName}>
                   {order.customer.name}
                 </Text>
-
-                <Text
-                  style={styles.addressPhone}
-                >
+                <Text style={styles.addressPhone}>
                   {order.customer.phone}
                 </Text>
-
               </View>
-
             </View>
 
-            <Text
-              style={styles.addressValue}
-            >
-              {order.customer.address}
+            <Text style={styles.addressValue}>
+              {typeof order.customer.address === "string"
+                ? order.customer.address
+                : JSON.stringify(order.customer.address)}
             </Text>
-
           </View>
-
         </View>
 
-        {/* PRODUCTS */}
-
         <View style={styles.section}>
-
-          <View
-            style={
-              styles.sectionHeaderRow
-            }
-          >
-
-            <Text style={styles.sectionTitle}>
-              Products
-            </Text>
-
-            <Text
-              style={styles.productCount}
-            >
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Products</Text>
+            <Text style={styles.productCount}>
               {order.items.length}{" "}
-              {order.items.length ===
-              1
-                ? "item"
-                : "items"}
+              {order.items.length === 1 ? "item" : "items"}
             </Text>
-
           </View>
 
           <View style={styles.infoCard}>
-
-            {order.items.map(
-              (item, index) => (
-                <View
-                  key={`${item.id}-${index}`}
-                  style={[
-                    styles.productRow,
-                    index !==
-                      order.items.length -
-                        1 &&
-                      styles.productRowBorder,
-                  ]}
-                >
-
-                  {item.image ? (
-                    <Image
-                      source={{
-                        uri: item.image,
-                      }}
-                      style={
-                        styles.productImage
-                      }
-                      resizeMode="cover"
+            {order.items.map((item, index) => (
+              <View
+                key={`${item.id}-${index}`}
+                style={[
+                  styles.productRow,
+                  index !== order.items.length - 1 &&
+                    styles.productRowBorder,
+                ]}
+              >
+                {item.image ? (
+                  <Image
+                    source={{ uri: item.image }}
+                    style={styles.productImage}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={styles.productImage}>
+                    <Ionicons
+                      name="image-outline"
+                      size={24}
+                      color="#999999"
                     />
-                  ) : (
-                    <View
-                      style={
-                        styles.productImage
-                      }
-                    />
-                  )}
-
-                  <View
-                    style={
-                      styles.productInfo
-                    }
-                  >
-
-                    <Text
-                      style={
-                        styles.productName
-                      }
-                      numberOfLines={2}
-                    >
-                      {item.name}
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.productSeller
-                      }
-                      numberOfLines={1}
-                    >
-                      {order.seller}
-                    </Text>
-
-                    <Text
-                      style={
-                        styles.productQuantity
-                      }
-                    >
-                      Qty: {item.quantity}
-                    </Text>
-
                   </View>
+                )}
 
-                  <View
-                    style={
-                      styles.productPriceContainer
-                    }
-                  >
+                <View style={styles.productInfo}>
+                  <Text style={styles.productName} numberOfLines={2}>
+                    {item.name}
+                  </Text>
 
-                    <Text
-                      style={
-                        styles.productPrice
-                      }
-                    >
-                      {formatPrice(
-                        Number(
-                          item.price
-                        ) *
-                          Number(
-                            item.quantity
-                          )
-                      )}
-                    </Text>
+                  <Text style={styles.productSeller} numberOfLines={1}>
+                    {order.seller}
+                  </Text>
 
-                  </View>
-
+                  <Text style={styles.productQuantity}>
+                    Qty: {item.quantity}
+                  </Text>
                 </View>
-              )
-            )}
 
+                <View style={styles.productPriceContainer}>
+                  <Text style={styles.productPrice}>
+                    {formatPrice(item.price * item.quantity)}
+                  </Text>
+                  
+                </View>
+              </View>
+            ))}
           </View>
-
         </View>
 
-        {/* PAYMENT METHOD */}
-
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Payment Method</Text>
 
-          <Text style={styles.sectionTitle}>
-            Payment Method
-          </Text>
-
-          <View
-            style={styles.paymentCard}
-          >
-
-            <View
-              style={styles.paymentIcon}
-            >
+          <View style={styles.paymentCard}>
+            <View style={styles.paymentIcon}>
               <Ionicons
                 name={
-                  order.paymentMethod ===
-                  "GCash"
+                  order.paymentMethod === "GCash"
                     ? "phone-portrait-outline"
                     : "cash-outline"
                 }
@@ -1276,298 +1182,154 @@ export default function OrderDetails() {
             </View>
 
             <View style={styles.paymentInfo}>
-
-              <Text
-                style={styles.paymentTitle}
-              >
-                {order.paymentMethod}
+              <Text style={styles.paymentTitle}>{order.paymentMethod}</Text>
+              <Text style={styles.paymentSubtitle}>
+                Payment status: {order.paymentStatus}
               </Text>
-
-              <Text
-                style={
-                  styles.paymentSubtitle
-                }
-              >
-                {order.paymentStatus ===
-                "Paid"
-                  ? "Payment confirmed"
-                  : order.status ===
-                    "To Pay"
-                  ? "Payment is still pending"
-                  : "Payment method used for this order"}
-              </Text>
-
             </View>
-
           </View>
-
         </View>
-
-        {/* ORDER SUMMARY */}
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Order Summary</Text>
 
-          <Text style={styles.sectionTitle}>
-            Order Summary
-          </Text>
-
-          <View
-            style={styles.summaryCard}
-          >
-
+          <View style={styles.summaryCard}>
             <View style={styles.summaryRow}>
-
-              <Text
-                style={styles.summaryLabel}
-              >
-                Subtotal
+              <Text style={styles.summaryLabel}>Subtotal</Text>
+              <Text style={styles.summaryValue}>
+                {formatPrice(order.subtotal)}
               </Text>
-
-              <Text
-                style={styles.summaryValue}
-              >
-                {formatPrice(
-                  order.subtotal
-                )}
-              </Text>
-
             </View>
 
             <View style={styles.summaryRow}>
-
-              <Text
-                style={styles.summaryLabel}
-              >
-                Delivery Fee
+              <Text style={styles.summaryLabel}>Delivery Fee</Text>
+              <Text style={styles.summaryValue}>
+                {formatPrice(order.deliveryFee)}
               </Text>
-
-              <Text
-                style={styles.summaryValue}
-              >
-                {formatPrice(
-                  order.deliveryFee
-                )}
-              </Text>
-
             </View>
 
-            <View
-              style={styles.summaryDivider}
-            />
+            <View style={styles.summaryDivider} />
 
             <View style={styles.summaryRow}>
-
-              <Text
-                style={
-                  styles.totalSummaryLabel
-                }
-              >
-                Total
+              <Text style={styles.totalSummaryLabel}>Total</Text>
+              <Text style={styles.totalSummaryValue}>
+                {formatPrice(order.total)}
               </Text>
-
-              <Text
-                style={
-                  styles.totalSummaryValue
-                }
-              >
-                {formatPrice(
-                  order.total
-                )}
-              </Text>
-
             </View>
-
           </View>
-
         </View>
 
-        {/* PAY NOW */}
-
-        {order.status ===
-          "To Pay" && (
-          <Pressable
-            style={
-              styles.primaryAction
-            }
-            onPress={handlePayNow}
-          >
-            <Ionicons
-              name="card-outline"
-              size={18}
-              color="#FFFFFF"
-            />
-
-            <Text
-              style={
-                styles.primaryActionText
-              }
+        {order.status === "To Pay" &&
+          order.paymentMethod === "GCash" && (
+            <Pressable
+              style={[
+                styles.primaryAction,
+                requesting && styles.disabledAction,
+              ]}
+              disabled={requesting}
+              onPress={handlePayNow}
             >
-              Pay Now
-            </Text>
-          </Pressable>
-        )}
+              {requesting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons
+                    name="card-outline"
+                    size={18}
+                    color="#FFFFFF"
+                  />
+                  <Text style={styles.primaryActionText}>Pay Now</Text>
+                </>
+              )}
+            </Pressable>
+          )}
 
-        {/* CANCEL */}
-
-        {order.status ===
-          "To Ship" && (
-          <Pressable
-            style={
-              styles.cancelAction
-            }
-            onPress={
-              handleCancelOrder
-            }
-          >
-            <Ionicons
-              name="close-circle-outline"
-              size={18}
-              color="#B32626"
-            />
-
-            <Text
-              style={
-                styles.cancelActionText
-              }
+        {["To Pay", "To Ship"].includes(order.status) &&
+          order.paymentMethod === "Cash on Delivery" && (
+            <Pressable
+              style={[
+                styles.cancelAction,
+                requesting && styles.disabledAction,
+              ]}
+              disabled={requesting}
+              onPress={handleCancelOrder}
             >
-              Cancel Order
-            </Text>
-          </Pressable>
-        )}
+              {requesting ? (
+                <ActivityIndicator color="#B32626" />
+              ) : (
+                <>
+                  <Ionicons
+                    name="close-circle-outline"
+                    size={18}
+                    color="#B32626"
+                  />
+                  <Text style={styles.cancelActionText}>Cancel Order</Text>
+                </>
+              )}
+            </Pressable>
+          )}
 
-        {/* ORDER RECEIVED */}
-
-        {order.status ===
-          "To Receive" && (
+        {order.status === "To Receive" && (
           <Pressable
-            style={
-              styles.primaryAction
-            }
-            onPress={
-              handleOrderReceived
-            }
+            style={[
+              styles.primaryAction,
+              requesting && styles.disabledAction,
+            ]}
+            disabled={requesting}
+            onPress={handleOrderReceived}
           >
             <Ionicons
               name="checkmark-circle-outline"
               size={18}
               color="#FFFFFF"
             />
-
-            <Text
-              style={
-                styles.primaryActionText
-              }
-            >
-              Order Received
-            </Text>
+            <Text style={styles.primaryActionText}>Order Received</Text>
           </Pressable>
         )}
 
-        {/* BUY AGAIN */}
-
-        {order.status ===
-          "Completed" && (
+        {order.status === "Completed" && (
           <Pressable
-            style={
-              styles.secondaryAction
-            }
-            onPress={
-              handleBuyAgain
-            }
+            style={styles.secondaryAction}
+            onPress={() => router.replace("/home")}
           >
-            <Ionicons
-              name="refresh-outline"
-              size={18}
-              color="#000000"
-            />
-
-            <Text
-              style={
-                styles.secondaryActionText
-              }
-            >
-              Buy Again
-            </Text>
+            <Ionicons name="refresh-outline" size={18} color="#000000" />
+            <Text style={styles.secondaryActionText}>Continue Shopping</Text>
           </Pressable>
         )}
 
-        {/* CANCELLED */}
-
-        {order.status ===
-          "Cancelled" && (
+        {order.status === "Cancelled" && (
           <Pressable
-            style={
-              styles.secondaryAction
-            }
-            onPress={() =>
-              router.replace(
-                "/home"
-              )
-            }
+            style={styles.secondaryAction}
+            onPress={() => router.replace("/home")}
           >
-            <Ionicons
-              name="bag-outline"
-              size={18}
-              color="#000000"
-            />
-
-            <Text
-              style={
-                styles.secondaryActionText
-              }
-            >
-              Continue Shopping
-            </Text>
+            <Ionicons name="bag-outline" size={18} color="#000000" />
+            <Text style={styles.secondaryActionText}>Continue Shopping</Text>
           </Pressable>
         )}
 
         <View style={{ height: 115 }} />
-
       </ScrollView>
 
-      {/* BOTTOM NAVIGATION */}
-
       <View style={styles.bottomNav}>
-
         <Pressable
           style={styles.navItem}
-          onPress={() =>
-            router.replace("/home")
-          }
+          onPress={() => router.replace("/home")}
         >
-          <Ionicons
-            name="home-outline"
-            size={23}
-            color="#777777"
-          />
-
-          <Text style={styles.navText}>
-            Home
-          </Text>
+          <Ionicons name="home-outline" size={23} color="#777777" />
+          <Text style={styles.navText}>Home</Text>
         </Pressable>
 
         <Pressable
           style={styles.navItem}
-          onPress={() =>
-            router.push("/search")
-          }
+          onPress={() => router.push("/search")}
         >
-          <Ionicons
-            name="search-outline"
-            size={23}
-            color="#777777"
-          />
-
-          <Text style={styles.navText}>
-            Search
-          </Text>
+          <Ionicons name="search-outline" size={23} color="#777777" />
+          <Text style={styles.navText}>Search</Text>
         </Pressable>
 
         <Pressable
           style={styles.cartButton}
-          onPress={() =>
-            router.push("/cart")
-          }
+          onPress={() => router.push("/cart")}
         >
           <Ionicons
             name="bag-handle-outline"
@@ -1578,63 +1340,62 @@ export default function OrderDetails() {
 
         <Pressable
           style={styles.navItem}
-          onPress={() =>
-            router.push("/orders")
-          }
+          onPress={() => router.push("/orders")}
         >
-          <Ionicons
-            name="receipt-outline"
-            size={23}
-            color="#000000"
-          />
-
-          <Text
-            style={
-              styles.activeNavText
-            }
-          >
-            Orders
-          </Text>
+          <Ionicons name="receipt-outline" size={23} color="#000000" />
+          <Text style={styles.activeNavText}>Orders</Text>
         </Pressable>
 
         <Pressable
           style={styles.navItem}
-          onPress={() =>
-            router.push("/profile")
-          }
+          onPress={() => router.push("/profile")}
         >
-          <Ionicons
-            name="person-outline"
-            size={23}
-            color="#777777"
-          />
-
-          <Text style={styles.navText}>
-            Profile
-          </Text>
+          <Ionicons name="person-outline" size={23} color="#777777" />
+          <Text style={styles.navText}>Profile</Text>
         </Pressable>
-
       </View>
-
     </View>
   );
 }
 
-// =====================================================
-// STYLES
-// =====================================================
+function InfoRow({ icon, label, value }) {
+  return (
+    <View style={styles.infoRow}>
+      <View style={styles.infoIcon}>
+        <Ionicons name={icon} size={18} color="#555555" />
+      </View>
+
+      <View style={styles.infoTextContainer}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue}>{String(value || "N/A")}</Text>
+      </View>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
-
   container: {
     flex: 1,
     backgroundColor: "#F7F7F7",
   },
 
+  centerContainer: {
+    flex: 1,
+    backgroundColor: "#F7F7F7",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontSize: 12,
+    color: "#777777",
+  },
+
   header: {
     height: 100,
     paddingTop: 45,
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1655,22 +1416,19 @@ const styles = StyleSheet.create({
   headerTitleContainer: {
     flex: 1,
     alignItems: "center",
+    paddingHorizontal: 8,
   },
 
   headerTitle: {
-    fontSize: 21,
+    fontSize: 19,
     fontWeight: "800",
     color: "#000000",
   },
 
   headerSubtitle: {
     marginTop: 3,
-    fontSize: 11,
+    fontSize: 10,
     color: "#777777",
-  },
-
-  headerSpacer: {
-    width: 42,
   },
 
   scrollView: {
@@ -1686,7 +1444,7 @@ const styles = StyleSheet.create({
   statusCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 16,
-    padding: 15,
+    padding: 14,
     borderWidth: 1,
     borderColor: "#E7E7E7",
     flexDirection: "row",
@@ -1694,9 +1452,9 @@ const styles = StyleSheet.create({
   },
 
   statusIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: "#F4F4F4",
     alignItems: "center",
     justifyContent: "center",
@@ -1704,13 +1462,13 @@ const styles = StyleSheet.create({
 
   statusInfo: {
     flex: 1,
-    marginLeft: 12,
-    paddingRight: 8,
+    marginLeft: 10,
+    paddingRight: 6,
     minWidth: 0,
   },
 
   statusTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "800",
     color: "#111111",
   },
@@ -1723,14 +1481,14 @@ const styles = StyleSheet.create({
   },
 
   statusBadge: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
   },
 
   statusBadgeText: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: "700",
   },
 
@@ -1807,7 +1565,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 10,
     paddingBottom: 18,
-    justifyContent: "flex-start",
   },
 
   trackingStepText: {
@@ -1824,6 +1581,18 @@ const styles = StyleSheet.create({
     marginTop: 3,
     fontSize: 9,
     color: "#777777",
+  },
+
+  cancelledTracking: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
+  cancelledTrackingText: {
+    flex: 1,
+    fontSize: 12,
+    color: "#B32626",
   },
 
   infoCard: {
@@ -1929,8 +1698,8 @@ const styles = StyleSheet.create({
   },
 
   productImage: {
-    width: 62,
-    height: 62,
+    width: 58,
+    height: 58,
     borderRadius: 10,
     backgroundColor: "#EEEEEE",
     flexShrink: 0,
@@ -1938,8 +1707,8 @@ const styles = StyleSheet.create({
 
   productInfo: {
     flex: 1,
-    marginLeft: 11,
-    paddingRight: 12,
+    marginLeft: 10,
+    paddingRight: 8,
     minWidth: 0,
   },
 
@@ -1954,7 +1723,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
     fontSize: 9,
     color: "#777777",
-    flexShrink: 1,
   },
 
   productQuantity: {
@@ -1964,14 +1732,14 @@ const styles = StyleSheet.create({
   },
 
   productPriceContainer: {
-    width: 82,
+    width: 86,
     alignItems: "flex-end",
     justifyContent: "center",
     flexShrink: 0,
   },
 
   productPrice: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "800",
     color: "#222222",
     textAlign: "right",
@@ -2067,7 +1835,7 @@ const styles = StyleSheet.create({
   },
 
   primaryAction: {
-    height: 48,
+    minHeight: 48,
     marginTop: 18,
     borderRadius: 12,
     backgroundColor: "#000000",
@@ -2075,6 +1843,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    paddingHorizontal: 16,
   },
 
   primaryActionText: {
@@ -2084,7 +1853,7 @@ const styles = StyleSheet.create({
   },
 
   secondaryAction: {
-    height: 48,
+    minHeight: 48,
     marginTop: 18,
     borderRadius: 12,
     backgroundColor: "#FFFFFF",
@@ -2094,6 +1863,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    paddingHorizontal: 16,
   },
 
   secondaryActionText: {
@@ -2103,7 +1873,7 @@ const styles = StyleSheet.create({
   },
 
   cancelAction: {
-    height: 48,
+    minHeight: 48,
     marginTop: 18,
     borderRadius: 12,
     backgroundColor: "#FFFFFF",
@@ -2113,12 +1883,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    paddingHorizontal: 16,
   },
 
   cancelActionText: {
     color: "#B32626",
     fontSize: 13,
     fontWeight: "700",
+  },
+
+  disabledAction: {
+    opacity: 0.6,
   },
 
   notFoundContainer: {

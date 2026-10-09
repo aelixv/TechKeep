@@ -199,7 +199,7 @@ export default function CheckoutScreen() {
     0
   );
 
-  const deliveryFee = 50;
+  const deliveryFee = 49;
 
   const total = subtotal + deliveryFee;
 
@@ -264,64 +264,53 @@ export default function CheckoutScreen() {
         return;
       }
 
-      const isGCash =
-        paymentMethod === "GCash";
+      
+const isGCash = paymentMethod === "GCash";
 
-      const orderData = {
-        customer: {
-          name: customer.name,
-          phone: customer.phone,
-        },
+const orderData = {
+  customer: {
+    name: customer.name,
+    phone: customer.phone,
+  },
 
-        customerName: customer.name,
-        customerPhone: customer.phone,
+  customerName: customer.name,
+  customerPhone: customer.phone,
 
-        items: checkoutItems.map((item) => ({
-          productId: item.id,
+  items: checkoutItems.map((item) => ({
+    productId: item.id,
+    productName: item.name || "Product",
+    price: Number(item.price || 0),
+    quantity: Number(item.quantity || 1),
+    image: item.image || "",
 
-          productName:
-            item.name || "Product",
+    seller:
+      typeof item.seller === "string"
+        ? item.seller
+        : item.seller?.name ||
+          item.sellerName ||
+          item.shopName ||
+          "Seller",
 
-          price: Number(item.price || 0),
+    sellerId: item.sellerId || "",
+  })),
 
-          quantity:
-            Number(item.quantity || 1),
+  subtotal,
+  deliveryFee,
+  total,
 
-          image:
-            item.image || "",
+  paymentMethod: isGCash ? "GCash" : "COD",
+  paymentStatus: "Pending",
 
-          seller:
-            item.seller ||
-            item.sellerName ||
-            item.shopName ||
-            "Seller",
+  // Use the status field read by the Orders screens.
+  status: isGCash ? "To Pay" : "To Ship",
 
-          sellerId:
-            item.sellerId ||
-            item.seller ||
-            "",
-        })),
+  // Keep this for compatibility if your backend uses it.
+  orderStatus: isGCash ? "To Pay" : "To Ship",
 
-        subtotal,
-        deliveryFee,
-        total,
+  deliveryAddress: customer.address,
+  createdAt: new Date().toISOString(),
+};
 
-        paymentMethod: isGCash
-          ? "GCash"
-          : "COD",
-
-        paymentStatus: isGCash
-          ? "Pending"
-          : "Pending",
-
-        orderStatus: isGCash
-          ? "To Pay"
-          : "To Ship",
-
-        deliveryAddress: customer.address,
-
-        createdAt: new Date().toISOString(),
-      };
 
       const response = await fetch(
         `${API_URL}/api/orders`,

@@ -81,7 +81,25 @@ export default function SearchScreen() {
           );
         }
 
-        setProducts(data);
+        const productList = Array.isArray(data)
+? data
+: Array.isArray(data.products)
+? data.products
+: [];
+
+console.log(
+"PRODUCT DATA:",
+productList.map((p) => ({
+name: p.name || p.productName,
+category: p.category,
+}))
+);
+
+setProducts(productList);
+
+
+setProducts(productList);
+
       } catch (error) {
         console.error(
           "Search products error:",
@@ -110,30 +128,45 @@ export default function SearchScreen() {
   // FILTER PRODUCTS
   // ===================================================
 
-  const filteredProducts = products.filter((product) => {
-    const matchesCategory =
-      selectedCategory === "All" ||
-      product.category === selectedCategory;
+  
+  const getText = (value) => {
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return String(value);
 
-    const search =
-      searchText.toLowerCase().trim();
+    if (value && typeof value === "object") {
+      return String(
+        value.name ||
+        value.shopName ||
+        value.storeName ||
+        ""
+      );
+    }
+
+    return "";
+  };
+
+  const filteredProducts = products.filter((product) => {
+    const name = getText(product.name || product.productName);
+    const seller = getText(
+      product.seller || product.sellerName || product.shopName
+    );
+    const category = getText(product.category);
+
+    const search = searchText.trim().toLowerCase();
+
+    
+const matchesCategory =
+  selectedCategory === "All" ||
+  category.trim().toLowerCase() ===
+    selectedCategory.trim().toLowerCase();
 
     const matchesSearch =
-      search === "" ||
-      product.name
-        .toLowerCase()
-        .includes(search) ||
-      product.seller
-        .toLowerCase()
-        .includes(search) ||
-      product.category
-        .toLowerCase()
-        .includes(search);
+      !search ||
+      name.toLowerCase().includes(search) ||
+      seller.toLowerCase().includes(search) ||
+      category.toLowerCase().includes(search);
 
-    return (
-      matchesCategory &&
-      matchesSearch
-    );
+    return matchesCategory && matchesSearch;
   });
 
   // ===================================================
@@ -449,7 +482,7 @@ export default function SearchScreen() {
                     {/* CATEGORY */}
 
                     <Text style={styles.productTag}>
-                      {product.category.toUpperCase()}
+                      {getText(product.category).toUpperCase()}
                     </Text>
 
                     {/* NAME */}
@@ -458,7 +491,7 @@ export default function SearchScreen() {
                       style={styles.productName}
                       numberOfLines={2}
                     >
-                      {product.name}
+                      {getText(product.name || product.productName) || "Product"}
                     </Text>
 
                     {/* PRICE */}
@@ -480,7 +513,9 @@ export default function SearchScreen() {
                       />
 
                       <Text style={styles.seller}>
-                        {product.seller}
+                        {getText(
+  product.seller || product.sellerName || product.shopName
+) || "Seller"}
                       </Text>
 
                     </View>
